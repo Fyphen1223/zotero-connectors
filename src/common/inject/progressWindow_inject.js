@@ -102,8 +102,16 @@ if (isTopWindow) {
 			var response = await Zotero.Connector.callMethod("getSelectedCollection", { switchToReadableLibrary: true })
 		}
 		catch (e) {
-			// TODO: Shouldn't this be coupled to the actual save process?
-			changeHeadline("Saving to zotero.org");
+			let selection = await Zotero.API.getServerLibraryTargets();
+			if (selection && selection.targets && selection.targets.length) {
+				let { target, targets } = selection;
+				lastSuccessfulTarget = target;
+				let headline = prefix || Zotero.getString('progressWindow_savingTo');
+				changeHeadline(headline, target, targets, {});
+			}
+			else {
+				changeHeadline("Saving to zotero.org");
+			}
 			return;
 		}
 		
@@ -307,15 +315,23 @@ if (isTopWindow) {
 			}
 			updatingSession = true;
 			
+			let previousTarget = lastSuccessfulTarget || {};
+			const prevEditable = previousTarget.filesEditable === false ? false : !!previousTarget.filesEditable;
+			const newEditable = data.target.filesEditable === false ? false : !!data.target.filesEditable;
+			
 			try {
 				await sendMessage(
 					"updateSession",
 					{
 						target: data.target.id,
-						tags: data.tags,
-						note: data.note.replace(/\n/g, "<br>"), // replace newlines with <br> for note-editor
-						resaveAttachments: !lastSuccessfulTarget.filesEditable && data.target.filesEditable,
-						removeAttachments: lastSuccessfulTarget.filesEditable && !data.target.filesEditable
+							targetLibraryType: data.target.libraryType,
+							targetLibraryID: data.target.libraryID,
+							targetFilesEditable: data.target.filesEditable,
+							targetName: data.target.name,
+							tags: data.tags,
+							note: (data.note ?? "").replace(/\n/g, "<br>"), // replace newlines with <br> for note-editor
+						resaveAttachments: prevEditable === false && newEditable === true,
+						removeAttachments: prevEditable === true && newEditable === false
 					}
 				);
 			}

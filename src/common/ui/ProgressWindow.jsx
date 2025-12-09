@@ -230,6 +230,9 @@ Zotero.UI.ProgressWindow = class ProgressWindow extends React.PureComponent {
 		this.existingTags = tags;
 		this.setState(state, () => {
 			this.setFilter();
+			if (targets && target) {
+				this.sendUpdate();
+			}
 		});
 	}
 	
@@ -377,13 +380,14 @@ Zotero.UI.ProgressWindow = class ProgressWindow extends React.PureComponent {
 	}
 	
 	sendUpdate() {
+		let target = this.state.target;
 		let tags = [...this.state.selectedTags];
 		// If Zotero version does not support tags autocomplete, it won't handle tags sent as an array.
 		// Then, send tags in the old format as a string.
 		if (!this.supportsTagsAutocomplete) {
 			tags = tags.join(",");
 		}
-		this.sendMessage('updated', { target: this.target, note: this.state.note, tags });
+		this.sendMessage('updated', { target, note: this.state.note, tags });
 	}
 	
 	//
@@ -510,7 +514,6 @@ Zotero.UI.ProgressWindow = class ProgressWindow extends React.PureComponent {
 		this.setState({ target, selectedTags }, () => {
 			this.sendUpdate();
 		});
-		this.target = target;
 		this.handleUserInteraction();
 	}
 	

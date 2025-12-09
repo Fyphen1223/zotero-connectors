@@ -44,6 +44,9 @@ let ItemSaver = function(options) {
 	this._baseURI = options.baseURI;
 	this._itemType = options.itemType;
 	this._items = [];
+	this._serverTarget = options.serverTarget;
+	this._userTags = options.userTags || [];
+	this._userNote = options.userNote;
 	this._singleFile = false;
 	
 	// Add listener for callbacks, but only for Safari or the bookmarklet. In Chrome, we
@@ -70,6 +73,19 @@ ItemSaver._attachmentCallbackListenerAdded = false;
 ItemSaver._attachmentCallbacks = {};
 
 ItemSaver.prototype = {
+	setServerTarget: function(target) {
+		this._serverTarget = target;
+	},
+	
+	setServerMetadata: function({ tags, note }) {
+		if (tags) {
+			this._userTags = tags;
+		}
+		if (typeof note === 'string') {
+			this._userNote = note;
+		}
+	},
+	
 	saveAsWebpage: function(doc) {
 		var doc = doc || document;
 		var item = {
@@ -471,6 +487,17 @@ ItemSaver.prototype = {
 	 */
 	_saveToServer: async function (items, attachmentCallback, itemsDoneCallback=()=>0) {
 		Zotero.debug(`ItemSaver._saveToServer: Saving ${items.length} items to server`);
+		
+		let library = this._serverTarget;
+		if (!library) {
+			let selection = await Zotero.API.getServerLibraryTargets();
+			library = selection && selection.target;
+		}
+		if (!library) {
+			throw new Error("Not authorized to save to zotero.org");
+		}
+		this._serverTarget = library;
+		
 		var newItems = [], itemIndices = [];
 		
 		for(var i=0, n=items.length; i<n; i++) {
@@ -480,13 +507,22 @@ ItemSaver.prototype = {
 				item.url = this._proxy.toProper(item.url);
 			}
 			itemIndices[i] = newItems.length;
+			
+			let extraTags = Array.isArray(this._userTags) ? this._userTags.filter(Boolean) : [];
+			if (extraTags.length) {
+				item.tags = (item.tags || []).concat(extraTags.map(tag => ({ tag })));
+			}
+			if (this._userNote) {
+				item.notes = item.notes || [];
+				item.notes.push({ note: this._userNote });
+			}
 			newItems = newItems.concat(Zotero.Utilities.Item.itemToAPIJSON(item));
 			for (let attachment of item.attachments) {
 				attachment.id = Zotero.Utilities.randomString();
 			}
 		}
 		
-		let response = await Zotero.API.createItem(newItems);
+		let response = await Zotero.API.createItem(newItems, undefined, library);
 		try {
 			var resp = JSON.parse(response);
 		} catch(e) {
@@ -521,7 +557,7 @@ ItemSaver.prototype = {
 			item.key = key;
 			if (item.attachments && item.attachments.length) {
 				await this._saveAttachmentsToServer(key, this._getFileBaseNameFromItem(item),
-					item.attachments, prefs, attachmentCallback);
+					item.attachments, prefs, attachmentCallback, library);
 			}
 		}
 		
@@ -539,7 +575,7 @@ ItemSaver.prototype = {
 	 *     on failure or attachmentCallback(attachment, progressPercent) periodically during saving.
 	 * @private
 	 */
-	_saveAttachmentsToServer: async function(itemKey, baseName, attachments, prefs, attachmentCallback=()=>0) {
+	_saveAttachmentsToServer: async function(itemKey, baseName, attachments, prefs, attachmentCallback=()=>0, library) {
 		let promises = []
 		for (let attachment of attachments) {
 			Zotero.debug(`ItemSaver._saveAttachmentsToServer: Saving attachment ${attachment.title} to server`);
@@ -558,6 +594,7 @@ ItemSaver.prototype = {
 			}
 
 			attachment.parentKey = itemKey;
+			attachment.library = library;
 
 			switch (attachment.mimeType.toLowerCase()) {
 			case "application/pdf":
