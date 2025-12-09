@@ -142,7 +142,7 @@ Zotero.ItemSaver.saveStandaloneAttachmentToZotero = async function(attachment, s
 
 Zotero.ItemSaver.saveAttachmentToServer = async function(attachment, tab) {
 	let promises = []
-	promises.push(this._createServerAttachmentItem(attachment));
+	promises.push(this._createServerAttachmentItem(attachment, attachment && attachment.library));
 
 	// SingleFile snapshot
 	if (typeof attachment.data === 'string' && attachment.mimeType === 'text/html') {
@@ -171,7 +171,7 @@ Zotero.ItemSaver.saveAttachmentToServer = async function(attachment, tab) {
 
 	// Do not return here or a message is attempted to pass back to injected page
 	// which causes a failure due to it sometimes exceeding max message length.
-	await Zotero.API.uploadAttachment(attachment);
+	await Zotero.API.uploadAttachment(attachment, attachment.library);
 }
 
 
@@ -184,7 +184,7 @@ Zotero.ItemSaver.saveAttachmentToServer = async function(attachment, tab) {
  * @returns {Promise.<String>} Item key
  * @private
  */
-Zotero.ItemSaver._createServerAttachmentItem = async function(attachment) {
+Zotero.ItemSaver._createServerAttachmentItem = async function(attachment, library) {
 	var item = [{
 		itemType: "attachment",
 		linkMode: attachment.linkMode,
@@ -197,7 +197,7 @@ Zotero.ItemSaver._createServerAttachmentItem = async function(attachment) {
 		item[0].parentItem = attachment.parentKey;
 	}
 	
-	let response = await Zotero.API.createItem(item);
+	let response = await Zotero.API.createItem(item, undefined, library);
 	try {
 		response = JSON.parse(response);
 	} catch(e) {

@@ -26,6 +26,32 @@
 Zotero.API = new function() {
 	var _tokenSecret;
 	var config = ZOTERO_CONFIG;
+	let _serverLibraryTargetsPromise;
+	
+	function _getLibraryPath(library, userInfo) {
+		if (!library) {
+			return `users/${userInfo['auth-userID']}`;
+		}
+		
+		let libraryType = library.libraryType || library.type || 'user';
+		let libraryID = library.libraryID || library.id || library.groupID || library.userID;
+		
+		// Strip the 'L' prefix used in the progress window when it reaches the API layer
+		if (typeof libraryID === 'string' && libraryID.startsWith('L')) {
+			// Format from progress window: Luser-123 or Lgroup-456
+			let parts = libraryID.slice(1).split('-');
+			if (parts.length === 2) {
+				libraryType = parts[0] === 'group' ? 'group' : 'user';
+				libraryID = parts[1];
+			} else {
+				Zotero.debug(`Unexpected library id format "${libraryID}", defaulting to user library`);
+				libraryID = libraryID.slice(1);
+			}
+		}
+		
+		let prefix = libraryType === 'group' ? 'groups' : 'users';
+		return `${prefix}/${libraryID}`;
+	}
 	
 	/**
 	 * Decodes application/x-www-form-urlencoded data
@@ -201,6 +227,81 @@ Zotero.API = new function() {
 		});
 	};
 	
+	this.setServerLibraryTarget = function(target) {
+		if (!target) return;
+		let prefValue = target.id || `${target.libraryType}:${target.libraryID}`;
+		Zotero.Prefs.set('server.lastLibraryTarget', prefValue);
+		if (_serverLibraryTargetsPromise) {
+			_serverLibraryTargetsPromise = _serverLibraryTargetsPromise.then((data) => {
+				if (!data) return data;
+				return Object.assign({}, data, { target });
+			});
+		}
+	};
+	
+	/**
+	 * Fetch available libraries (user + groups) for save-to-server mode.
+	 * Returns { target, targets } where target is the preferred/default library row.
+	 */
+	this.getServerLibraryTargets = async function(force=false) {
+		if (_serverLibraryTargetsPromise && !force) {
+			return _serverLibraryTargetsPromise;
+		}
+		
+		_serverLibraryTargetsPromise = (async () => {
+			const userInfo = await this.getUserInfo();
+			if (!userInfo) return null;
+			
+			let targets = [{
+				id: `Luser-${userInfo['auth-userID']}`,
+				name: "My Library",
+				level: 0,
+				libraryType: 'user',
+				libraryID: userInfo['auth-userID'],
+				filesEditable: true,
+				libraryEditable: true
+			}];
+			
+			try {
+				let url = `${config.API_URL}users/${userInfo['auth-userID']}/groups`;
+				let xhr = await Zotero.HTTP.request("GET", url, {
+					headers: {
+						"Zotero-API-Key": userInfo['auth-token_secret'],
+						"Zotero-API-Version": "3",
+					}
+				});
+					let groups = JSON.parse(xhr.responseText);
+					for (let group of groups) {
+						let data = group.data || group;
+						let groupID = data.id || data.groupID || data.group;
+						let filesEditable = data.fileEditing ? data.fileEditing !== 'none' : true;
+						let libraryEditable = data.libraryEditing ? data.libraryEditing !== 'none' : true;
+						targets.push({
+							id: `Lgroup-${groupID}`,
+							name: data.name || `Group ${groupID}`,
+						level: 0,
+						libraryType: 'group',
+						libraryID: groupID,
+						filesEditable,
+						libraryEditable
+					});
+				}
+			}
+			catch (e) {
+				Zotero.logError(e);
+			}
+			
+			let preferred = Zotero.Prefs.get('server.lastLibraryTarget');
+			let target = targets.find(t => t.id == preferred
+				|| `${t.libraryType}:${t.libraryID}` == preferred);
+			if (!target) {
+				target = targets[0];
+			}
+			return { target, targets };
+		})();
+		return _serverLibraryTargetsPromise;
+	};
+	
 	/**
 	 * Creates a new item. In Safari, this runs in the background script. In Chrome, it
 	 * runs in the injected script.
@@ -208,22 +309,23 @@ Zotero.API = new function() {
 	 * @param {String|null} itemKey Parent item key, or null if a top-level item.
 	 * @param {Boolean} [askForAuth] If askForAuth === false, don't ask for authorization if not 
 	 *     already authorized.
+	 * @param {Object} [library] Library descriptor { libraryType, libraryID }
 	 */
-	this.createItem = async function(payload, askForAuth) {
+	this.createItem = async function(payload, askForAuth, library) {
 		var userInfo = await Zotero.API.getUserInfo();
 		if(!userInfo) {
 			if(askForAuth === false) {
 				throw new Error("Not authorized");
 			}
 			return Zotero.API.authorize().then(function() {
-				return Zotero.API.createItem(payload, false);
+				return Zotero.API.createItem(payload, false, library);
 			}, function(e) {
 				e.message = `Authentication failed: ${e.message}`;
 				throw e;
 			})
 		}
 		
-		var url = config.API_URL + "users/" + userInfo['auth-userID'] + "/items";
+		var url = config.API_URL + _getLibraryPath(library, userInfo) + "/items";
 		var options = {
 			body: JSON.stringify(payload),
 			headers: {
@@ -238,7 +340,7 @@ Zotero.API = new function() {
 		}
 		catch(e) {
 			if (askForAuth && e.status === 403) {
-				return Zotero.API.createItem(payload, true);
+				return Zotero.API.createItem(payload, true, library);
 			}
 			Zotero.logError(e);
 			throw e;
@@ -254,7 +356,7 @@ Zotero.API = new function() {
 	 *     md5 - the MD5 hash of the attachment contents<br>
 	 *     mimeType - the attachment MIME type
 	 */
-	this.uploadAttachment = async function(attachment) {
+	this.uploadAttachment = async function(attachment, library) {
 		const REQUIRED_PROPERTIES = ["data", "key", "md5", "mimeType"];
 		for (const property of REQUIRED_PROPERTIES) {
 			if (!attachment[property]) {
@@ -288,7 +390,7 @@ Zotero.API = new function() {
 			throw new Error("No authorization credentials available");
 		}
 		
-		const url = config.API_URL + "users/" + userInfo['auth-userID'] + "/items/" + attachment.key + "/file";
+		const url = config.API_URL + _getLibraryPath(library, userInfo) + "/items/" + attachment.key + "/file";
 		let options = {
 			body: data,
 			headers: {

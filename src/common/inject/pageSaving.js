@@ -142,6 +142,57 @@ let PageSaving = {
 	_clearSession() {
 		this.sessionDetails = {};
 	},
+	
+	async _getServerTarget() {
+		if (this.sessionDetails.serverTarget) {
+			return this.sessionDetails.serverTarget;
+		}
+		let selection = await Zotero.API.getServerLibraryTargets();
+		this.sessionDetails.serverTarget = selection && selection.target;
+		return this.sessionDetails.serverTarget;
+	},
+	
+		_parseLibraryTarget(target, data={}) {
+			if (!target) return null;
+			let matches = target.toString().match(/^L(user|group)-(.+)/);
+			let libraryType = matches ? (matches[1] || 'user') : 'user';
+			let libraryID = matches ? matches[2] : target;
+			return {
+				id: target,
+				libraryType: data.targetLibraryType || libraryType,
+				libraryID: data.targetLibraryID || libraryID,
+				filesEditable: data.targetFilesEditable,
+				name: data.targetName
+			};
+		},
+		
+		_applyServerSessionUpdate(data) {
+			let target = this._parseLibraryTarget(data.target, data);
+		if (!target) return;
+		this.sessionDetails.serverTarget = target;
+			
+			let tags = data.tags;
+			if (typeof tags === 'string') {
+				tags = tags.split(',').map(tag => tag.trim()).filter(Boolean);
+			}
+			if (Array.isArray(tags)) {
+				this.sessionDetails.tags = tags;
+			}
+		if (typeof data.note === 'string') {
+			this.sessionDetails.note = data.note;
+		}
+		
+		if (this.sessionDetails.itemSaver && this.sessionDetails.itemSaver.setServerTarget) {
+			this.sessionDetails.itemSaver.setServerTarget(target);
+			if (this.sessionDetails.itemSaver.setServerMetadata) {
+				this.sessionDetails.itemSaver.setServerMetadata({
+					tags: this.sessionDetails.tags,
+					note: this.sessionDetails.note
+				});
+			}
+		}
+		Zotero.API.setServerLibraryTarget(target);
+	},
 
 	_shouldReopenProgressWindow(translatorID, options, itemType=null) {
 		// We have already saved something on this page
@@ -303,7 +354,15 @@ let PageSaving = {
 		items = this._processNote(items);
 		this.sessionDetails.items = items;
 		let itemType = translators[0].itemType;
-		let itemSaver = new Zotero.ItemSaver({ sessionID, itemType, baseURI: document.location.href, proxy });
+		let itemSaver = new Zotero.ItemSaver({
+			sessionID,
+			itemType,
+			baseURI: document.location.href,
+			proxy,
+			serverTarget: this.sessionDetails.serverTarget,
+			userTags: this.sessionDetails.tags,
+			userNote: this.sessionDetails.note
+		});
 		this.sessionDetails.itemSaver = itemSaver;
 		return itemSaver.saveItems(items, PageSaving._onAttachmentProgress, onItemsSaved)
 	},
@@ -386,8 +445,14 @@ let PageSaving = {
 		} catch (e) {
 			// Client unavailable
 			if (e.status === 0) {
-				let itemSaver = new Zotero.ItemSaver({});
+				let serverTarget = await this._getServerTarget();
+				let itemSaver = new Zotero.ItemSaver({
+					serverTarget,
+					userTags: this.sessionDetails.tags,
+					userNote: this.sessionDetails.note
+				});
 				this.sessionDetails.itemSaver = itemSaver;
+				this.sessionDetails.serverTarget = serverTarget;
 				let result = await itemSaver.saveAsWebpage();
 				items[0].key = result[0].key;
 				Zotero.Messaging.sendMessage("progressWindow.itemProgress", { ...items[0], progress: 100 });
@@ -433,6 +498,7 @@ let PageSaving = {
 
 			if (toServer) {
 				snapshotItem.data = snapshotContent;
+				snapshotItem.library = await this._getServerTarget();
 				await Zotero.ItemSaver.saveAttachmentToServer(snapshotItem);
 			}
 			else {
@@ -516,6 +582,10 @@ let PageSaving = {
 			// Client unavailable
 			if (e.status === 0) {
 				Zotero.Messaging.sendMessage("progressWindow.itemProgress", { ...progressItem, ...{ progress: 0 } });
+				if (Array.isArray(this.sessionDetails.tags)) {
+					standaloneAttachment.tags = this.sessionDetails.tags.map(tag => ({ tag }));
+				}
+				standaloneAttachment.library = await this._getServerTarget();
 				await Zotero.ItemSaver.saveAttachmentToServer(standaloneAttachment);
 				Zotero.Messaging.sendMessage("progressWindow.itemProgress", { ...progressItem, ...{ progress: 100 } });
 				Zotero.Messaging.sendMessage("progressWindow.done", [true]);
@@ -660,15 +730,39 @@ let PageSaving = {
 		// iframe due to how messaging is set up, and we need to ignore it
 		// on all but the frame that has sessionDetails.id - is translating.
 		if (!this.sessionDetails.id) return;
-		await Zotero.Connector.callMethod(
-			"updateSession",
-			{
-				sessionID: this.sessionDetails.id,
-				target: data.target,
-				tags: data.tags,
-				note: data.note
+		
+		let handledOffline = false;
+		try {
+			if (Zotero.Connector.isOnline === false) {
+				this._applyServerSessionUpdate(data);
+				handledOffline = true;
 			}
-		);
+			
+			if (!handledOffline) {
+				await Zotero.Connector.callMethod(
+					"updateSession",
+					{
+						sessionID: this.sessionDetails.id,
+						target: data.target,
+						tags: data.tags,
+						note: data.note
+					}
+				);
+			}
+		}
+		catch (e) {
+			if (e.status === 0) {
+				this._applyServerSessionUpdate(data);
+				handledOffline = true;
+			}
+			else {
+				throw e;
+			}
+		}
+		
+		if (handledOffline) {
+			return;
+		}
 
 		if (data.resaveAttachments && this.sessionDetails.itemSaver) {
 			Zotero.Messaging.sendMessage("progressWindow.show", [this.sessionDetails.id]);
