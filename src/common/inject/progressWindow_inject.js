@@ -104,10 +104,10 @@ if (isTopWindow) {
 		catch (e) {
 			let selection = await Zotero.API.getServerLibraryTargets();
 			if (selection && selection.targets && selection.targets.length) {
-				let { target, targets } = selection;
+				let { target, targets, tags = {} } = selection;
 				lastSuccessfulTarget = target;
 				let headline = prefix || Zotero.getString('progressWindow_savingTo');
-				changeHeadline(headline, target, targets, {});
+				changeHeadline(headline, target, targets, tags);
 			}
 			else {
 				changeHeadline("Saving to zotero.org");
@@ -327,6 +327,7 @@ if (isTopWindow) {
 							targetLibraryType: data.target.libraryType,
 							targetLibraryID: data.target.libraryID,
 							targetFilesEditable: data.target.filesEditable,
+							targetCollectionKey: data.target.collectionKey,
 							targetName: data.target.name,
 							tags: data.tags,
 							note: (data.note ?? "").replace(/\n/g, "<br>"), // replace newlines with <br> for note-editor

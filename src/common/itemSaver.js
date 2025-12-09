@@ -45,6 +45,7 @@ let ItemSaver = function(options) {
 	this._itemType = options.itemType;
 	this._items = [];
 	this._serverTarget = options.serverTarget;
+	this._serverCollectionKey = options.serverCollectionKey || (options.serverTarget && options.serverTarget.collectionKey);
 	this._userTags = options.userTags || [];
 	this._userNote = options.userNote;
 	this._singleFile = false;
@@ -75,6 +76,7 @@ ItemSaver._attachmentCallbacks = {};
 ItemSaver.prototype = {
 	setServerTarget: function(target) {
 		this._serverTarget = target;
+		this._serverCollectionKey = target && target.collectionKey;
 	},
 	
 	setServerMetadata: function({ tags, note }) {
@@ -497,6 +499,12 @@ ItemSaver.prototype = {
 			throw new Error("Not authorized to save to zotero.org");
 		}
 		this._serverTarget = library;
+		this._serverCollectionKey = library.collectionKey || this._serverCollectionKey;
+		const collectionKey = this._serverCollectionKey;
+		
+		if (this._sessionID) {
+			Zotero.Messaging.sendMessage("progressWindow.sessionCreated", { sessionID: this._sessionID });
+		}
 		
 		var newItems = [], itemIndices = [];
 		
@@ -515,6 +523,12 @@ ItemSaver.prototype = {
 			if (this._userNote) {
 				item.notes = item.notes || [];
 				item.notes.push({ note: this._userNote });
+			}
+			if (collectionKey) {
+				item.collections = item.collections || [];
+				if (!item.collections.includes(collectionKey)) {
+					item.collections.push(collectionKey);
+				}
 			}
 			newItems = newItems.concat(Zotero.Utilities.Item.itemToAPIJSON(item));
 			for (let attachment of item.attachments) {

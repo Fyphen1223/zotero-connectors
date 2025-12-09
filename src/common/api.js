@@ -252,7 +252,107 @@ Zotero.API = new function() {
 			const userInfo = await this.getUserInfo();
 			if (!userInfo) return null;
 			
-			let targets = [{
+			const headers = {
+				"Zotero-API-Key": userInfo['auth-token_secret'],
+				"Zotero-API-Version": "3",
+			};
+			
+			const fetchAllPages = async (url) => {
+				const results = [];
+				let start = 0;
+				const limit = 100;
+				while (true) {
+					const pageUrl = `${url}${url.includes('?') ? '&' : '?'}limit=${limit}&start=${start}`;
+					let xhr;
+					try {
+						xhr = await Zotero.HTTP.request("GET", pageUrl, { headers });
+					}
+					catch (e) {
+						Zotero.logError(e);
+						break;
+					}
+					let data;
+					try {
+						data = JSON.parse(xhr.responseText);
+					}
+					catch (e) {
+						Zotero.logError(e);
+						break;
+					}
+					if (!Array.isArray(data) || !data.length) break;
+					results.push(...data);
+					
+					const totalResultsHeader = xhr.getResponseHeader && xhr.getResponseHeader('Total-Results');
+					const totalResults = totalResultsHeader ? parseInt(totalResultsHeader, 10) : null;
+					const hasTotal = Number.isFinite(totalResults);
+					start += data.length;
+					if (data.length < limit) break;
+					if (hasTotal && start >= totalResults) break;
+				}
+				return results;
+			};
+			
+			const buildCollectionRows = (libraryRow, collections=[]) => {
+				const rows = [];
+				const byParent = new Map();
+				for (let col of collections) {
+					let data = col.data || col;
+					let key = data.key || data.id || data.collectionKey;
+					if (!key) continue;
+					let parent = data.parentCollection || false;
+					if (!byParent.has(parent)) {
+						byParent.set(parent, []);
+					}
+					byParent.get(parent).push({
+						key,
+						name: data.name || `Collection ${key}`,
+						parent
+					});
+				}
+				
+				const addChildren = (parentKey, level) => {
+					let children = byParent.get(parentKey) || [];
+					children.sort((a, b) => a.name.localeCompare(b.name));
+					for (let child of children) {
+						rows.push({
+							id: `C${libraryRow.libraryType}-${libraryRow.libraryID}-${child.key}`,
+							name: child.name,
+							level,
+							libraryType: libraryRow.libraryType,
+							libraryID: libraryRow.libraryID,
+							collectionKey: child.key,
+							filesEditable: libraryRow.filesEditable,
+							libraryEditable: libraryRow.libraryEditable
+						});
+						addChildren(child.key, level + 1);
+					}
+				};
+				
+				addChildren(false, libraryRow.level + 1);
+				return rows;
+			};
+			
+			const fetchCollectionsForLibrary = async (libraryRow) => {
+				let path = _getLibraryPath({
+					libraryType: libraryRow.libraryType,
+					libraryID: libraryRow.libraryID
+				}, userInfo);
+				let url = `${config.API_URL}${path}/collections`;
+				return fetchAllPages(url);
+			};
+			
+			const fetchTagsForLibrary = async (libraryRow) => {
+				let path = _getLibraryPath({
+					libraryType: libraryRow.libraryType,
+					libraryID: libraryRow.libraryID
+				}, userInfo);
+				let url = `${config.API_URL}${path}/tags`;
+				let rawTags = await fetchAllPages(url);
+				let tags = rawTags.map(tag => tag.tag || tag.name || tag).filter(Boolean);
+				return [...new Set(tags)];
+			};
+			
+			let userLibraryRow = {
 				id: `Luser-${userInfo['auth-userID']}`,
 				name: "My Library",
 				level: 0,
@@ -260,7 +360,18 @@ Zotero.API = new function() {
 				libraryID: userInfo['auth-userID'],
 				filesEditable: true,
 				libraryEditable: true
-			}];
+			};
+			let targets = [userLibraryRow];
+			let tags = {};
+			
+			try {
+				let userCollections = await fetchCollectionsForLibrary(userLibraryRow);
+				targets = targets.concat(buildCollectionRows(userLibraryRow, userCollections));
+				tags[userLibraryRow.id] = await fetchTagsForLibrary(userLibraryRow);
+			}
+			catch (e) {
+				Zotero.logError(e);
+			}
 			
 			try {
 				let url = `${config.API_URL}users/${userInfo['auth-userID']}/groups`;
@@ -276,15 +387,24 @@ Zotero.API = new function() {
 						let groupID = data.id || data.groupID || data.group;
 						let filesEditable = data.fileEditing ? data.fileEditing !== 'none' : true;
 						let libraryEditable = data.libraryEditing ? data.libraryEditing !== 'none' : true;
-						targets.push({
-							id: `Lgroup-${groupID}`,
-							name: data.name || `Group ${groupID}`,
+					let libraryRow = {
+						id: `Lgroup-${groupID}`,
+						name: data.name || `Group ${groupID}`,
 						level: 0,
 						libraryType: 'group',
 						libraryID: groupID,
 						filesEditable,
 						libraryEditable
-					});
+					};
+					targets.push(libraryRow);
+					try {
+						let collections = await fetchCollectionsForLibrary(libraryRow);
+						targets = targets.concat(buildCollectionRows(libraryRow, collections));
+						tags[libraryRow.id] = await fetchTagsForLibrary(libraryRow);
+					}
+					catch (e) {
+						Zotero.logError(e);
+					}
 				}
 			}
 			catch (e) {
@@ -297,7 +417,7 @@ Zotero.API = new function() {
 			if (!target) {
 				target = targets[0];
 			}
-			return { target, targets };
+			return { target, targets, tags };
 		})();
 		return _serverLibraryTargetsPromise;
 	};
