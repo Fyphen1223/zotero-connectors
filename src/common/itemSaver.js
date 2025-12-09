@@ -40,11 +40,13 @@ const PRIMARY_ATTACHMENT_TYPES = new Set([
 let ItemSaver = function(options) {
 	this.newItems = [];
 	this._sessionID = options.sessionID;
+	this._sessionCreatedNotified = false;
 	this._proxy = options.proxy;
 	this._baseURI = options.baseURI;
 	this._itemType = options.itemType;
 	this._items = [];
 	this._serverTarget = options.serverTarget;
+	this._serverCollectionKey = options.serverCollectionKey || (options.serverTarget && options.serverTarget.collectionKey);
 	this._userTags = options.userTags || [];
 	this._userNote = options.userNote;
 	this._singleFile = false;
@@ -75,6 +77,7 @@ ItemSaver._attachmentCallbacks = {};
 ItemSaver.prototype = {
 	setServerTarget: function(target) {
 		this._serverTarget = target;
+		this._serverCollectionKey = target && target.collectionKey;
 	},
 	
 	setServerMetadata: function({ tags, note }) {
@@ -83,6 +86,13 @@ ItemSaver.prototype = {
 		}
 		if (typeof note === 'string') {
 			this._userNote = note;
+		}
+	},
+	
+	_notifySessionCreated: function() {
+		if (this._sessionID && !this._sessionCreatedNotified) {
+			Zotero.Messaging.sendMessage("progressWindow.sessionCreated", { sessionID: this._sessionID });
+			this._sessionCreatedNotified = true;
 		}
 	},
 	
@@ -218,7 +228,7 @@ ItemSaver.prototype = {
 		itemsDoneCallback(items);
 
 		Zotero.debug("Translate: Save via Zotero succeeded");
-		Zotero.Messaging.sendMessage("progressWindow.sessionCreated", { sessionID: this._sessionID });
+		this._notifySessionCreated();
 		
 		if (!zoteroSupportsAttachmentUpload) {
 			await this.saveAttachmentsViaZotero(items, attachmentCallback);
@@ -497,6 +507,13 @@ ItemSaver.prototype = {
 			throw new Error("Not authorized to save to zotero.org");
 		}
 		this._serverTarget = library;
+		this._serverCollectionKey = library.collectionKey || this._serverCollectionKey;
+		const collectionKey = this._serverCollectionKey;
+		
+		if (this._sessionID && !this._sessionCreatedNotified) {
+			Zotero.Messaging.sendMessage("progressWindow.sessionCreated", { sessionID: this._sessionID });
+			this._sessionCreatedNotified = true;
+		}
 		
 		var newItems = [], itemIndices = [];
 		
@@ -515,6 +532,11 @@ ItemSaver.prototype = {
 			if (this._userNote) {
 				item.notes = item.notes || [];
 				item.notes.push({ note: this._userNote });
+			}
+			if (collectionKey) {
+				let collections = new Set(item.collections || []);
+				collections.add(collectionKey);
+				item.collections = Array.from(collections);
 			}
 			newItems = newItems.concat(Zotero.Utilities.Item.itemToAPIJSON(item));
 			for (let attachment of item.attachments) {

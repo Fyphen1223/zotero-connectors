@@ -48,6 +48,13 @@ export async function mochaGlobalSetup() {
 			`--load-extension=${EXTENSION_PATH}`,
 		],
 	};
+
+	if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+		launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+	}
+	if (process.env.PUPPETEER_NO_SANDBOX === 'true') {
+		launchOptions.args.push('--no-sandbox', '--disable-setuid-sandbox');
+	}
 	
 	const browser = await puppeteer.launch(launchOptions);
 	

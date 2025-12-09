@@ -29,6 +29,9 @@ const SITE_ACCESS_LIMIT_TRANSLATORS = new Set([
 	"57a00950-f0d1-4b41-b6ba-44ff0fc30289" // GoogleScholar
 ]);
 
+const COLLECTION_TARGET_RE = /^C(user|group)-([^-]+)-(.+)/;
+const LIBRARY_TARGET_RE = /^L(user|group)-(.+)/;
+
 function determineAttachmentIcon(attachment) {
 	if(attachment.linkMode === "linked_url") {
 		return Zotero.ItemTypes.getImageSrc("attachment-web-link");
@@ -152,32 +155,51 @@ let PageSaving = {
 		return this.sessionDetails.serverTarget;
 	},
 	
-		_parseLibraryTarget(target, data={}) {
-			if (!target) return null;
-			let matches = target.toString().match(/^L(user|group)-(.+)/);
-			let libraryType = matches ? (matches[1] || 'user') : 'user';
-			let libraryID = matches ? matches[2] : target;
-			return {
-				id: target,
-				libraryType: data.targetLibraryType || libraryType,
-				libraryID: data.targetLibraryID || libraryID,
-				filesEditable: data.targetFilesEditable,
-				name: data.targetName
-			};
-		},
+	_parseLibraryTarget(target, data={}) {
+		if (!target) return null;
+		let targetStr = target.toString();
+		let libraryType = 'user';
+		let libraryID = targetStr;
+		let collectionKey;
+		let collectionMatch = targetStr.match(COLLECTION_TARGET_RE);
+		if (collectionMatch) {
+			libraryType = collectionMatch[1] || 'user';
+			libraryID = collectionMatch[2];
+			collectionKey = collectionMatch[3];
+		}
+		else {
+			let matches = targetStr.match(LIBRARY_TARGET_RE);
+			libraryType = matches ? (matches[1] || 'user') : 'user';
+			libraryID = matches ? matches[2] : targetStr;
+		}
+		libraryType = data.targetLibraryType || libraryType;
+		libraryID = data.targetLibraryID || libraryID;
+		let parsed = {
+			id: target,
+			libraryType,
+			libraryID,
+			filesEditable: data.targetFilesEditable,
+			name: data.targetName
+		};
+		if (data.targetCollectionKey || collectionKey) {
+			parsed.collectionKey = data.targetCollectionKey || collectionKey;
+		}
+		return parsed;
+	},
 		
-		_applyServerSessionUpdate(data) {
-			let target = this._parseLibraryTarget(data.target, data);
+	_applyServerSessionUpdate(data) {
+		let target = this._parseLibraryTarget(data.target, data);
 		if (!target) return;
 		this.sessionDetails.serverTarget = target;
+		this.sessionDetails.serverCollectionKey = target.collectionKey;
 			
-			let tags = data.tags;
-			if (typeof tags === 'string') {
-				tags = tags.split(',').map(tag => tag.trim()).filter(Boolean);
-			}
-			if (Array.isArray(tags)) {
-				this.sessionDetails.tags = tags;
-			}
+		let tags = data.tags;
+		if (typeof tags === 'string') {
+			tags = tags.split(',').map(tag => tag.trim()).filter(Boolean);
+		}
+		if (Array.isArray(tags)) {
+			this.sessionDetails.tags = tags;
+		}
 		if (typeof data.note === 'string') {
 			this.sessionDetails.note = data.note;
 		}
@@ -360,6 +382,7 @@ let PageSaving = {
 			baseURI: document.location.href,
 			proxy,
 			serverTarget: this.sessionDetails.serverTarget,
+			serverCollectionKey: this.sessionDetails.serverCollectionKey,
 			userTags: this.sessionDetails.tags,
 			userNote: this.sessionDetails.note
 		});
@@ -447,7 +470,9 @@ let PageSaving = {
 			if (e.status === 0) {
 				let serverTarget = await this._getServerTarget();
 				let itemSaver = new Zotero.ItemSaver({
+					sessionID,
 					serverTarget,
+					serverCollectionKey: this.sessionDetails.serverCollectionKey,
 					userTags: this.sessionDetails.tags,
 					userNote: this.sessionDetails.note
 				});
