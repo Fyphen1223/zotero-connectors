@@ -253,7 +253,7 @@ Zotero.API = new function() {
 			const userInfo = await this.getUserInfo();
 			if (!userInfo) return null;
 			
-		let targets = [{
+			let targets = [{
 				id: `Luser-${userInfo['auth-userID']}`,
 				name: "My Library",
 				level: 0,
