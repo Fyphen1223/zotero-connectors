@@ -279,15 +279,21 @@ Zotero.API = new function() {
 						Zotero.logError(e);
 						break;
 					}
-					if (!Array.isArray(data) || !data.length) break;
-					results.push(...data);
-					
-					const totalResultsHeader = xhr.getResponseHeader && xhr.getResponseHeader('Total-Results');
-					const totalResults = totalResultsHeader ? parseInt(totalResultsHeader, 10) : null;
+					const pageLength = Array.isArray(data) ? data.length : 0;
+					const totalResultsHeader = xhr.getResponseHeader('Total-Results');
+					const parsedTotal = totalResultsHeader ? parseInt(totalResultsHeader, 10) : NaN;
+					const totalResults = Number.isNaN(parsedTotal) ? null : parsedTotal;
 					const hasTotal = Number.isFinite(totalResults);
-					start += data.length;
-					if (data.length < limit) break;
-					if (hasTotal && start >= totalResults) break;
+					
+					if (Array.isArray(data)) {
+						results.push(...data);
+					}
+					start += pageLength;
+					
+					const reachedTotal = hasTotal && start >= totalResults;
+					const exhausted = pageLength === 0;
+					const belowLimit = !hasTotal && pageLength < limit;
+					if (reachedTotal || exhausted || belowLimit) break;
 				}
 				return results;
 			};
@@ -309,11 +315,16 @@ Zotero.API = new function() {
 						parent
 					});
 				}
+				for (let children of byParent.values()) {
+					children.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+				}
 				
-				const addChildren = (parentKey, level) => {
+				let stack = [{ parentKey: false, level: libraryRow.level + 1 }];
+				while (stack.length) {
+					let { parentKey, level } = stack.pop();
 					let children = byParent.get(parentKey) || [];
-					children.sort((a, b) => a.name.localeCompare(b.name));
-					for (let child of children) {
+					for (let i = children.length - 1; i >= 0; i--) {
+						let child = children[i];
 						rows.push({
 							id: `C${libraryRow.libraryType}-${libraryRow.libraryID}-${child.key}`,
 							name: child.name,
@@ -324,11 +335,9 @@ Zotero.API = new function() {
 							filesEditable: libraryRow.filesEditable,
 							libraryEditable: libraryRow.libraryEditable
 						});
-						addChildren(child.key, level + 1);
+						stack.push({ parentKey: child.key, level: level + 1 });
 					}
-				};
-				
-				addChildren(false, libraryRow.level + 1);
+				}
 				return rows;
 			};
 			
@@ -348,8 +357,15 @@ Zotero.API = new function() {
 				}, userInfo);
 				let url = `${config.API_URL}${path}/tags`;
 				let rawTags = await fetchAllPages(url);
-				let tags = rawTags.map(tag => tag.tag || tag.name || tag).filter(Boolean);
-				return [...new Set(tags)];
+				// API responses include objects with a `tag` property; fall back to `name` or plain strings
+				let tagSet = new Set();
+				for (let tag of rawTags) {
+					let name = (tag && typeof tag === 'object') ? (tag.tag || tag.name) : tag;
+					if (typeof name === 'string' && name) {
+						tagSet.add(name);
+					}
+				}
+				return [...tagSet];
 			};
 			
 			let userLibraryRow = {

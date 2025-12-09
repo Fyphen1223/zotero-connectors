@@ -29,6 +29,9 @@ const SITE_ACCESS_LIMIT_TRANSLATORS = new Set([
 	"57a00950-f0d1-4b41-b6ba-44ff0fc30289" // GoogleScholar
 ]);
 
+const COLLECTION_TARGET_RE = /^C(user|group)-([^-]+)-(.+)/;
+const LIBRARY_TARGET_RE = /^L(user|group)-(.+)/;
+
 function determineAttachmentIcon(attachment) {
 	if(attachment.linkMode === "linked_url") {
 		return Zotero.ItemTypes.getImageSrc("attachment-web-link");
@@ -158,14 +161,14 @@ let PageSaving = {
 		let libraryType = 'user';
 		let libraryID = targetStr;
 		let collectionKey;
-		let collectionMatch = targetStr.match(/^C(user|group)-([^-]+)-(.+)/);
+		let collectionMatch = targetStr.match(COLLECTION_TARGET_RE);
 		if (collectionMatch) {
 			libraryType = collectionMatch[1] || 'user';
 			libraryID = collectionMatch[2];
 			collectionKey = collectionMatch[3];
 		}
 		else {
-			let matches = targetStr.match(/^L(user|group)-(.+)/);
+			let matches = targetStr.match(LIBRARY_TARGET_RE);
 			libraryType = matches ? (matches[1] || 'user') : 'user';
 			libraryID = matches ? matches[2] : targetStr;
 		}
@@ -379,6 +382,7 @@ let PageSaving = {
 			baseURI: document.location.href,
 			proxy,
 			serverTarget: this.sessionDetails.serverTarget,
+			serverCollectionKey: this.sessionDetails.serverCollectionKey,
 			userTags: this.sessionDetails.tags,
 			userNote: this.sessionDetails.note
 		});
@@ -468,6 +472,7 @@ let PageSaving = {
 				let itemSaver = new Zotero.ItemSaver({
 					sessionID,
 					serverTarget,
+					serverCollectionKey: this.sessionDetails.serverCollectionKey,
 					userTags: this.sessionDetails.tags,
 					userNote: this.sessionDetails.note
 				});

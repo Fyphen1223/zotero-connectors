@@ -40,6 +40,7 @@ const PRIMARY_ATTACHMENT_TYPES = new Set([
 let ItemSaver = function(options) {
 	this.newItems = [];
 	this._sessionID = options.sessionID;
+	this._sessionCreatedNotified = false;
 	this._proxy = options.proxy;
 	this._baseURI = options.baseURI;
 	this._itemType = options.itemType;
@@ -85,6 +86,13 @@ ItemSaver.prototype = {
 		}
 		if (typeof note === 'string') {
 			this._userNote = note;
+		}
+	},
+	
+	_notifySessionCreated: function() {
+		if (this._sessionID && !this._sessionCreatedNotified) {
+			Zotero.Messaging.sendMessage("progressWindow.sessionCreated", { sessionID: this._sessionID });
+			this._sessionCreatedNotified = true;
 		}
 	},
 	
@@ -220,7 +228,7 @@ ItemSaver.prototype = {
 		itemsDoneCallback(items);
 
 		Zotero.debug("Translate: Save via Zotero succeeded");
-		Zotero.Messaging.sendMessage("progressWindow.sessionCreated", { sessionID: this._sessionID });
+		this._notifySessionCreated();
 		
 		if (!zoteroSupportsAttachmentUpload) {
 			await this.saveAttachmentsViaZotero(items, attachmentCallback);
@@ -502,8 +510,9 @@ ItemSaver.prototype = {
 		this._serverCollectionKey = library.collectionKey || this._serverCollectionKey;
 		const collectionKey = this._serverCollectionKey;
 		
-		if (this._sessionID) {
+		if (this._sessionID && !this._sessionCreatedNotified) {
 			Zotero.Messaging.sendMessage("progressWindow.sessionCreated", { sessionID: this._sessionID });
+			this._sessionCreatedNotified = true;
 		}
 		
 		var newItems = [], itemIndices = [];
@@ -525,10 +534,9 @@ ItemSaver.prototype = {
 				item.notes.push({ note: this._userNote });
 			}
 			if (collectionKey) {
-				item.collections = item.collections || [];
-				if (!item.collections.includes(collectionKey)) {
-					item.collections.push(collectionKey);
-				}
+				let collections = new Set(item.collections || []);
+				collections.add(collectionKey);
+				item.collections = Array.from(collections);
 			}
 			newItems = newItems.concat(Zotero.Utilities.Item.itemToAPIJSON(item));
 			for (let attachment of item.attachments) {

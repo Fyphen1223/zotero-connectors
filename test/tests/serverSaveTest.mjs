@@ -25,6 +25,11 @@
 
 import { Tab, stubHTTPRequest } from '../support/utils.mjs';
 
+const USER_LIBRARY_ID = 'Luser-1';
+const USER_COLLECTION_ID = 'Cuser-1-AAAA';
+const GROUP_LIBRARY_ID = 'Lgroup-5';
+const GROUP_COLLECTION_ID = 'Cgroup-5-BBBB';
+
 describe("Server save targets", function() {
 	let tab = new Tab();
 
@@ -58,10 +63,10 @@ describe("Server save targets", function() {
 			});
 
 			const targetIds = result.targets.map(t => t.id);
-			assert.includeMembers(targetIds, ['Luser-1', 'Cuser-1-AAAA', 'Lgroup-5', 'Cgroup-5-BBBB']);
-			assert.strictEqual(result.targets.find(t => t.id === 'Cuser-1-AAAA').level, 1);
-			assert.deepEqual(result.tags['Luser-1'], ['alpha']);
-			assert.deepEqual(result.tags['Lgroup-5'], ['beta']);
+			assert.includeMembers(targetIds, [USER_LIBRARY_ID, USER_COLLECTION_ID, GROUP_LIBRARY_ID, GROUP_COLLECTION_ID]);
+			assert.strictEqual(result.targets.find(t => t.id === USER_COLLECTION_ID).level, 1);
+			assert.deepEqual(result.tags[USER_LIBRARY_ID], ['alpha']);
+			assert.deepEqual(result.tags[GROUP_LIBRARY_ID], ['beta']);
 		}
 		finally {
 			await restoreHTTP();
@@ -79,7 +84,7 @@ describe("Server save targets", function() {
 				const itemSaver = new Zotero.ItemSaver({
 					sessionID: 'session-1',
 					serverTarget: {
-						id: 'Cuser-1-AAAA',
+						id: USER_COLLECTION_ID,
 						libraryType: 'user',
 						libraryID: '1',
 						collectionKey: 'AAAA'
