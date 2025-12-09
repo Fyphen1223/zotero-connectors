@@ -213,6 +213,7 @@ Zotero.API = new function() {
 	this.clearCredentials = function() {
 		let keys = ['auth-token', 'auth-token_secret', 'auth-userID', 'auth-username'];
 		Zotero.Prefs.clear(keys);
+		_serverLibraryTargetsPromise = null;
 		// TODO revoke key
 	};
 	
@@ -252,7 +253,7 @@ Zotero.API = new function() {
 			const userInfo = await this.getUserInfo();
 			if (!userInfo) return null;
 			
-			let targets = [{
+		let targets = [{
 				id: `Luser-${userInfo['auth-userID']}`,
 				name: "My Library",
 				level: 0,
@@ -339,8 +340,10 @@ Zotero.API = new function() {
 			return xhr.responseText;
 		}
 		catch(e) {
-			if (askForAuth && e.status === 403) {
-				return Zotero.API.createItem(payload, true, library);
+			if (askForAuth !== false && (e.status === 401 || e.status === 403)) {
+				this.clearCredentials();
+				await Zotero.API.authorize();
+				return Zotero.API.createItem(payload, false, library);
 			}
 			Zotero.logError(e);
 			throw e;

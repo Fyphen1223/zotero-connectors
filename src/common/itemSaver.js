@@ -494,6 +494,11 @@ ItemSaver.prototype = {
 			library = selection && selection.target;
 		}
 		if (!library) {
+			await Zotero.API.authorize();
+			let selection = await Zotero.API.getServerLibraryTargets(true);
+			library = selection && selection.target;
+		}
+		if (!library) {
 			throw new Error("Not authorized to save to zotero.org");
 		}
 		this._serverTarget = library;
